@@ -22,7 +22,7 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@admin")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is required")
 
-bot = Bot(BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 TWO_GB = 2 * 1024 * 1024 * 1024
@@ -153,7 +153,6 @@ async def handle_link(message: Message):
             await status.edit_text(f"❌ Download failed. Contact {ADMIN_USERNAME}\n\n`{e}`")
         except Exception:
             await message.reply(f"❌ Download failed. Contact {ADMIN_USERNAME}\n\n`{e}`")
-
 
 async def main():
     await dp.start_polling(bot)
