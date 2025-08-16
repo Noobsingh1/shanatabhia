@@ -17,7 +17,7 @@ from utils import human_bytes, format_bar, fmt_eta
 
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("7670198611:AAEwf0-xqEiBHocibNAXMRqz08TIVFWz8PM")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@admin")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is required")
