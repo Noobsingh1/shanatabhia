@@ -153,3 +153,10 @@ async def handle_link(message: Message):
             await status.edit_text(f"❌ Download failed. Contact {ADMIN_USERNAME}\n\n`{e}`")
         except Exception:
             await message.reply(f"❌ Download failed. Contact {ADMIN_USERNAME}\n\n`{e}`")
+
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
