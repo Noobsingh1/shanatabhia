@@ -85,7 +85,7 @@ async def download_with_progress(
         last_update = 0.0
 
         while True:
-            api.refresh()
+            download.update()
             st = download.live
             status = download.status
 
