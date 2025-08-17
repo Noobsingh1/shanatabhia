@@ -1,5 +1,7 @@
 aiogram==3.13.1
 aiohttp==3.9.5
-aria2p
-telethon==1.36.0
+aria2p==0.12.1
 python-dotenv==1.0.1
+# Optional (upload progress). If you don't want progress, you can remove these two:
+pyrogram==2.0.106
+tgcrypto==1.2.5
