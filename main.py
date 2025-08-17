@@ -10,26 +10,24 @@ from aiogram.filters import Command
 
 import aiohttp
 import aria2p
+from aiohttp import web
+from dotenv import load_dotenv
 
 # ---------- Config / Env ----------
-from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@admin")
 API_BASE = os.getenv("API_BASE", "https://open-dragonfly-vonex-c2746ec1.koyeb.app/download?url=")
 
-# Pyrogram (optional for upload progress)
 PYROGRAM_API_ID = os.getenv("PYROGRAM_API_ID")
 PYROGRAM_API_HASH = os.getenv("PYROGRAM_API_HASH")
 
-# aria2 / paths
 ARIA2_PORT = int(os.getenv("ARIA2_PORT", "6800"))
 RPC_SECRET = os.getenv("RPC_SECRET", "secret123")
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/data")
 COOKIES_FILE = os.getenv("COOKIES_FILE", "/app/cookies.txt")  # optional
 
-# Health server port (Koyeb expects HTTP check)
 HEALTH_PORT = int(os.getenv("PORT", "8080"))
 
 if not BOT_TOKEN:
@@ -78,9 +76,7 @@ def fmt_eta(seconds: int) -> str:
         return f"{h:02d}:{m:02d}:{s:02d}"
     return f"{m:02d}:{s:02d}"
 
-# ---------- Health Server (aiohttp) ----------
-from aiohttp import web
-
+# ---------- Health Server ----------
 async def health_handler(_):
     return web.Response(text="ok", status=200)
 
@@ -93,17 +89,16 @@ async def start_health_server():
     await site.start()
     log.info(f"Health server listening on :{HEALTH_PORT}")
 
-# ---------- Metadata fetch from your API ----------
+# ---------- Metadata fetch from API ----------
 async def fetch_metadata(share_url: str) -> dict:
     url = API_BASE + aiohttp.helpers.quote(share_url, safe="")
     async with aiohttp.ClientSession() as sess:
         async with sess.get(url, timeout=60) as r:
             r.raise_for_status()
             data = await r.json(content_type=None)
-            # Expected keys: file_name, size_bytes, thumbnail, link, download_link, streaming_url, status
             return data or {}
 
-# ---------- Aria2 RPC management ----------
+# ---------- Aria2 RPC ----------
 async def _spawn_aria2_rpc():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     args = [
@@ -131,7 +126,6 @@ async def _spawn_aria2_rpc():
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    # give a moment to boot
     await asyncio.sleep(0.7)
     return proc
 
@@ -144,7 +138,6 @@ async def download_with_progress(
     aria2_proc = await _spawn_aria2_rpc()
     start_ts = time.time()
     try:
-        # connect aria2p
         api = None
         for _ in range(25):
             try:
@@ -160,16 +153,17 @@ async def download_with_progress(
             "dir": DOWNLOAD_DIR,
             "out": out_name,
             "header": [
-                # terabox/CDN friendly headers
-                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "User-Agent: Mozilla/5.0",
                 "Referer: https://www.1024terabox.com/",
             ],
         }
+        if os.path.exists(COOKIES_FILE):
+            options["load-cookies"] = COOKIES_FILE
+
         download = api.add_uris([url], options=options)
 
         last_update = 0.0
         while True:
-            # timeout guard
             if (time.time() - start_ts) > timeout_sec:
                 try:
                     api.remove(download)
@@ -184,7 +178,6 @@ async def download_with_progress(
             if status == "complete":
                 break
             if status in ("error", "removed"):
-                # fetch detailed error
                 error_msg = ""
                 try:
                     raw = api.client.tell_status(download.gid, ["status", "errorMessage"])
@@ -226,14 +219,12 @@ async def download_with_progress(
             except asyncio.TimeoutError:
                 aria2_proc.kill()
 
-# ---------- Optional: upload with Pyrogram to show progress ----------
+# ---------- Upload (Pyrogram optional) ----------
 USE_PYRO_UPLOAD = bool(PYROGRAM_API_ID and PYROGRAM_API_HASH)
 
 async def upload_with_pyrogram_progress(chat_id: int, file_path: str, caption: str, file_name: str,
                                         progress_msg: Message):
     from pyrogram import Client
-    from pyrogram.types import InputMediaVideo
-
     app = Client(
         name="bot-uploader",
         api_id=int(PYROGRAM_API_ID),
@@ -284,7 +275,6 @@ async def handle_link(message: Message):
         meta = await fetch_metadata(text)
         file_name = meta.get("file_name") or "video.mp4"
         size_bytes = int(meta.get("size_bytes") or 0)
-        thumb_url = meta.get("thumbnail")
         dl_url = meta.get("download_link") or meta.get("link")
 
         if not dl_url:
@@ -295,7 +285,6 @@ async def handle_link(message: Message):
             await status.edit_text("⚠️ Sorry, only files below **2GB** are supported.")
             return
 
-        # announce downloading
         await status.edit_text(
             f"⬇️ **Downloading File...**\n"
             f"`{file_name}`\n"
@@ -304,23 +293,6 @@ async def handle_link(message: Message):
             f"Speed: 0 MB/s • ETA: 00:00"
         )
 
-        # (optional) fetch thumbnail for later — not strictly needed for bot API
-        thumb_path: Optional[str] = None
-        if thumb_url:
-            try:
-                import pathlib
-                async with aiohttp.ClientSession() as sess:
-                    async with sess.get(thumb_url, timeout=30) as r:
-                        if r.status == 200:
-                            b = await r.read()
-                            thumb_path = f"/thumbs/{os.path.splitext(os.path.basename(file_name))[0]}.jpg"
-                            pathlib.Path(thumb_path).parent.mkdir(parents=True, exist_ok=True)
-                            with open(thumb_path, "wb") as f:
-                                f.write(b)
-            except Exception:
-                thumb_path = None
-
-        # download with aria2 (progress)
         async def on_dl_progress(p):
             bar = format_bar(p["percent"])
             spd = f"{human_bytes(p['speed'])}/s"
@@ -344,7 +316,6 @@ async def handle_link(message: Message):
             on_progress=on_dl_progress
         )
 
-        # uploading
         await status.edit_text(
             "📤 **Uploading...**\n"
             f"`{file_name}`\n\n"
@@ -352,7 +323,6 @@ async def handle_link(message: Message):
         )
 
         if USE_PYRO_UPLOAD:
-            # Real progress via Pyrogram
             await upload_with_pyrogram_progress(
                 chat_id=message.chat.id,
                 file_path=out_path,
@@ -361,7 +331,6 @@ async def handle_link(message: Message):
                 progress_msg=status,
             )
         else:
-            # Fallback via Aiogram (no progress)
             from aiogram.types import FSInputFile
             try:
                 await bot.send_video(
@@ -370,13 +339,11 @@ async def handle_link(message: Message):
                     caption="✅ Download Complete",
                 )
             except Exception:
-                # if video fails (codec), fallback to document
                 await bot.send_document(
                     chat_id=message.chat.id,
                     document=FSInputFile(out_path, filename=file_name),
                     caption="✅ Download Complete",
                 )
-            # try to clean status
             try:
                 await status.delete()
             except Exception:
@@ -392,7 +359,6 @@ async def handle_link(message: Message):
 
 # ---------- Entrypoint ----------
 async def main():
-    # start health server + bot polling together
     await asyncio.gather(
         start_health_server(),
         dp.start_polling(bot)
