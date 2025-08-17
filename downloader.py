@@ -8,6 +8,7 @@ import aria2p
 ARIA2_PORT = int(os.getenv("ARIA2_PORT", "6800"))
 ARIA2_SECRET = os.getenv("RPC_SECRET", "secret123")
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/data")
+COOKIES_FILE = os.getenv("COOKIES_FILE", "/app/cookies.txt")
 
 async def _spawn_aria2_rpc():
     """
@@ -28,6 +29,7 @@ async def _spawn_aria2_rpc():
         "--min-split-size=1M",
         "--file-allocation=none",
         "--console-log-level=warn",
+        f"--load-cookies={COOKIES_FILE}",   # 👈 cookies load karega
         cwd=DOWNLOAD_DIR,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -77,8 +79,16 @@ async def download_with_progress(
         if api is None:
             raise RuntimeError("Failed to connect to aria2 RPC")
 
-        # Add download
-        options = {"dir": DOWNLOAD_DIR, "out": out_name}
+        # Add download with headers + cookies
+        options = {
+            "dir": DOWNLOAD_DIR,
+            "out": out_name,
+            "header": [
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Referer: https://www.1024terabox.com/",
+            ],
+        }
+
         download = api.add_uris([url], options=options)
 
         start = time.time()
