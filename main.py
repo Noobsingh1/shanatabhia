@@ -20,13 +20,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@admin")
 API_BASE = os.getenv("API_BASE", "https://open-dragonfly-vonex-c2746ec1.koyeb.app/download?url=")
 
-PYROGRAM_API_ID = os.getenv("PYROGRAM_API_ID")
-PYROGRAM_API_HASH = os.getenv("PYROGRAM_API_HASH")
-
 ARIA2_PORT = int(os.getenv("ARIA2_PORT", "6800"))
 RPC_SECRET = os.getenv("RPC_SECRET", "secret123")
 DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/data")
-COOKIES_FILE = os.getenv("COOKIES_FILE", "/app/cookies.txt")  # optional
+COOKIES_FILE = os.getenv("COOKIES_FILE", "/app/cookies.txt")  # 🔑 cookies path
 
 HEALTH_PORT = int(os.getenv("PORT", "8080"))
 
@@ -89,7 +86,7 @@ async def start_health_server():
     await site.start()
     log.info(f"Health server listening on :{HEALTH_PORT}")
 
-# ---------- Metadata fetch from API ----------
+# ---------- Metadata fetch ----------
 async def fetch_metadata(share_url: str) -> dict:
     url = API_BASE + aiohttp.helpers.quote(share_url, safe="")
     async with aiohttp.ClientSession() as sess:
@@ -104,11 +101,9 @@ async def _spawn_aria2_rpc():
     args = [
         "aria2c",
         "--enable-rpc=true",
-        "--rpc-listen-all=false",
         f"--rpc-listen-port={ARIA2_PORT}",
         f"--rpc-secret={RPC_SECRET}",
         "--continue=true",
-        "--daemon=false",
         "--check-certificate=false",
         "--summary-interval=0",
         "--max-connection-per-server=16",
@@ -118,7 +113,7 @@ async def _spawn_aria2_rpc():
         "--console-log-level=warn",
     ]
     if os.path.exists(COOKIES_FILE):
-        args.append(f"--load-cookies={COOKIES_FILE}")
+        args.append(f"--load-cookies={COOKIES_FILE}")  # ✅ cookies attach
 
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -154,7 +149,7 @@ async def download_with_progress(
             "out": out_name,
             "header": [
                 "User-Agent: Mozilla/5.0",
-                "Referer: https://www.1024terabox.com/",
+                "Referer: https://www.terabox.com/",
             ],
         }
         if os.path.exists(COOKIES_FILE):
@@ -219,44 +214,6 @@ async def download_with_progress(
             except asyncio.TimeoutError:
                 aria2_proc.kill()
 
-# ---------- Upload (Pyrogram optional) ----------
-USE_PYRO_UPLOAD = bool(PYROGRAM_API_ID and PYROGRAM_API_HASH)
-
-async def upload_with_pyrogram_progress(chat_id: int, file_path: str, caption: str, file_name: str,
-                                        progress_msg: Message):
-    from pyrogram import Client
-    app = Client(
-        name="bot-uploader",
-        api_id=int(PYROGRAM_API_ID),
-        api_hash=PYROGRAM_API_HASH,
-        bot_token=BOT_TOKEN,
-        workdir="/tmp/pyro",
-        no_updates=True,
-    )
-
-    async def progress(current, total):
-        percent = 0 if total == 0 else (current / total) * 100.0
-        try:
-            await progress_msg.edit_text(
-                "📤 **Uploading...**\n"
-                f"`{os.path.basename(file_path)}`\n\n"
-                f"{format_bar(percent)} {percent:.1f}%"
-            )
-        except Exception:
-            pass
-
-    await app.start()
-    try:
-        await app.send_video(
-            chat_id=chat_id,
-            video=file_path,
-            file_name=file_name,
-            caption=caption,
-            progress=progress,
-        )
-    finally:
-        await app.stop()
-
 # ---------- Bot Handlers ----------
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -265,7 +222,7 @@ async def cmd_start(message: Message):
 @dp.message(F.text)
 async def handle_link(message: Message):
     text = (message.text or "").strip()
-    if not text or ("terabox" not in text and "1024terabox" not in text):
+    if not text or ("terabox" not in text):
         await message.reply("❌ Please send a valid Terabox share link.")
         return
 
@@ -289,65 +246,46 @@ async def handle_link(message: Message):
             f"⬇️ **Downloading File...**\n"
             f"`{file_name}`\n"
             f"Size: {human_bytes(size_bytes)}\n\n"
-            f"{format_bar(0)} 0.0%\n"
-            f"Speed: 0 MB/s • ETA: 00:00"
+            f"{format_bar(0)} 0.0%"
         )
 
         async def on_dl_progress(p):
             bar = format_bar(p["percent"])
+            pct = f"{p['percent']:.1f}%"
             spd = f"{human_bytes(p['speed'])}/s"
             eta = fmt_eta(p["eta"])
-            pct = f"{p['percent']:.1f}%"
-            txt = (
-                f"⬇️ **Downloading File...**\n"
-                f"`{file_name}`\n"
-                f"Size: {human_bytes(size_bytes)}\n\n"
-                f"{bar} {pct}\n"
-                f"Speed: {spd} • ETA: {eta}"
-            )
             try:
-                await status.edit_text(txt)
+                await status.edit_text(
+                    f"⬇️ **Downloading File...**\n"
+                    f"`{file_name}`\n"
+                    f"Size: {human_bytes(size_bytes)}\n\n"
+                    f"{bar} {pct}\n"
+                    f"Speed: {spd} • ETA: {eta}"
+                )
             except Exception:
                 pass
 
-        out_path = await download_with_progress(
-            url=dl_url,
-            out_name=file_name,
-            on_progress=on_dl_progress
-        )
+        out_path = await download_with_progress(dl_url, file_name, on_dl_progress)
 
-        await status.edit_text(
-            "📤 **Uploading...**\n"
-            f"`{file_name}`\n\n"
-            f"{format_bar(0)} 0.0%"
-        )
+        await status.edit_text(f"📤 **Uploading...**\n`{file_name}`")
 
-        if USE_PYRO_UPLOAD:
-            await upload_with_pyrogram_progress(
+        from aiogram.types import FSInputFile
+        try:
+            await bot.send_video(
                 chat_id=message.chat.id,
-                file_path=out_path,
+                video=FSInputFile(out_path, filename=file_name),
                 caption="✅ Download Complete",
-                file_name=file_name,
-                progress_msg=status,
             )
-        else:
-            from aiogram.types import FSInputFile
-            try:
-                await bot.send_video(
-                    chat_id=message.chat.id,
-                    video=FSInputFile(out_path, filename=file_name),
-                    caption="✅ Download Complete",
-                )
-            except Exception:
-                await bot.send_document(
-                    chat_id=message.chat.id,
-                    document=FSInputFile(out_path, filename=file_name),
-                    caption="✅ Download Complete",
-                )
-            try:
-                await status.delete()
-            except Exception:
-                await status.edit_text("✅ Download Complete")
+        except Exception:
+            await bot.send_document(
+                chat_id=message.chat.id,
+                document=FSInputFile(out_path, filename=file_name),
+                caption="✅ Download Complete",
+            )
+        try:
+            await status.delete()
+        except Exception:
+            await status.edit_text("✅ Download Complete")
 
     except Exception as e:
         logging.exception("Error handling link")
